@@ -1,1 +1,1 @@
-MMCV_WITH_OPS=1 pip install -e .
+MMCV_WITH_OPS=1 pip install -e . -vvv
