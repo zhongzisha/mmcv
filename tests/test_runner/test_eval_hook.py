@@ -1,5 +1,6 @@
 import json
 import os.path as osp
+import sys
 import tempfile
 import unittest.mock as mock
 from collections import OrderedDict
@@ -11,11 +12,15 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset
 
+from mmcv.fileio.file_client import PetrelBackend
 from mmcv.runner import DistEvalHook as BaseDistEvalHook
 from mmcv.runner import EpochBasedRunner
 from mmcv.runner import EvalHook as BaseEvalHook
 from mmcv.runner import IterBasedRunner
 from mmcv.utils import get_logger, scandir
+
+sys.modules['petrel_client'] = MagicMock()
+sys.modules['petrel_client.client'] = MagicMock()
 
 
 class ExampleDataset(Dataset):
@@ -121,9 +126,34 @@ def test_eval_hook():
 
     with pytest.raises(KeyError):
         # rule must be in keys of rule_map
-        test_dataset = Model()
+        test_dataset = ExampleDataset()
         data_loader = DataLoader(test_dataset)
         EvalHook(data_loader, save_best='auto', rule='unsupport')
+
+    # if eval_res is an empty dict, print a warning information
+    with pytest.warns(UserWarning) as record_warnings:
+
+        class _EvalDataset(ExampleDataset):
+
+            def evaluate(self, results, logger=None):
+                return {}
+
+        test_dataset = _EvalDataset()
+        data_loader = DataLoader(test_dataset)
+        eval_hook = EvalHook(data_loader, save_best='auto')
+        runner = _build_epoch_runner()
+        runner.register_hook(eval_hook)
+        runner.run([data_loader], [('train', 1)], 1)
+    # Since there will be many warnings thrown, we just need to check if the
+    # expected exceptions are thrown
+    expected_message = ('Since `eval_res` is an empty dict, the behavior to '
+                        'save the best checkpoint will be skipped in this '
+                        'evaluation.')
+    for warning in record_warnings:
+        if str(warning.message) == expected_message:
+            break
+    else:
+        assert False
 
     test_dataset = ExampleDataset()
     loader = DataLoader(test_dataset)
@@ -236,7 +266,7 @@ def test_eval_hook():
         assert osp.exists(ckpt_path)
         assert runner.meta['hook_msgs']['best_score'] == -3
 
-    # Test the EvalHook when resume happend
+    # Test the EvalHook when resume happened
     data_loader = DataLoader(EvalDataset())
     eval_hook = EvalHook(data_loader, save_best='acc')
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -297,6 +327,34 @@ def test_eval_hook():
         assert runner.meta['hook_msgs']['best_ckpt'] == ckpt_path
         assert osp.exists(ckpt_path)
         assert runner.meta['hook_msgs']['best_score'] == -3
+
+    # test EvalHook with specified `out_dir`
+    loader = DataLoader(EvalDataset())
+    model = Model()
+    data_loader = DataLoader(EvalDataset())
+    out_dir = 's3://user/data'
+    eval_hook = EvalHook(
+        data_loader, interval=1, save_best='auto', out_dir=out_dir)
+
+    with patch.object(PetrelBackend, 'put') as mock_put, \
+         patch.object(PetrelBackend, 'remove') as mock_remove, \
+         patch.object(PetrelBackend, 'isfile') as mock_isfile, \
+         tempfile.TemporaryDirectory() as tmpdir:
+        logger = get_logger('test_eval')
+        runner = EpochBasedRunner(model=model, work_dir=tmpdir, logger=logger)
+        runner.register_checkpoint_hook(dict(interval=1))
+        runner.register_hook(eval_hook)
+        runner.run([loader], [('train', 1)], 8)
+
+        basename = osp.basename(runner.work_dir.rstrip(osp.sep))
+        ckpt_path = f'{out_dir}/{basename}/best_acc_epoch_4.pth'
+
+        assert runner.meta['hook_msgs']['best_ckpt'] == ckpt_path
+        assert runner.meta['hook_msgs']['best_score'] == 7
+
+    assert mock_put.call_count == 3
+    assert mock_remove.call_count == 2
+    assert mock_isfile.call_count == 2
 
 
 @patch('mmcv.engine.single_gpu_test', MagicMock)
@@ -417,7 +475,7 @@ def test_logger(runner, by_epoch, eval_hook_priority):
 
         path = osp.join(tmpdir, next(scandir(tmpdir, '.json')))
         with open(path) as fr:
-            fr.readline()  # skip first line which is hook_msg
+            fr.readline()  # skip the first line which is `hook_msg`
             train_log = json.loads(fr.readline())
             assert train_log['mode'] == 'train' and 'time' in train_log
             val_log = json.loads(fr.readline())
