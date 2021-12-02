@@ -1,5 +1,6 @@
 import glob
 import os
+import platform
 import re
 from pkg_resources import DistributionNotFound, get_distribution
 from setuptools import find_packages, setup
@@ -223,7 +224,25 @@ def get_extensions():
 
         os.environ.setdefault('MAX_JOBS', str(cpu_use))
         define_macros = []
-        extra_compile_args = {'cxx': ['-std=c++14']}
+
+        # Before PyTorch1.8.0, when compiling CUDA code, `cxx` is a
+        # required key passed to PyTorch. Even if there is no flag passed
+        # to cxx, users also need to pass an empty list to PyTorch.
+        # Since PyTorch1.8.0, it has a default value so users do not need
+        # to pass an empty list anymore.
+        # More details at https://github.com/pytorch/pytorch/pull/45956
+        extra_compile_args = {'cxx': []}
+
+        # Since the PR (https://github.com/open-mmlab/mmcv/pull/1463) uses
+        # c++14 features, the argument ['std=c++14'] must be added here.
+        # However, in the windows environment, some standard libraries
+        # will depend on c++17 or higher. In fact, for the windows
+        # environment, the compiler will choose the appropriate compiler
+        # to compile those cpp files, so there is no need to add the
+        # argument
+        if platform.system() != 'Windows':
+            extra_compile_args['cxx'] = ['-std=c++14']
+
         include_dirs = []
 
         is_rocm_pytorch = False
@@ -271,7 +290,14 @@ def get_extensions():
             extension = CppExtension
             include_dirs.append(os.path.abspath('./mmcv/ops/csrc/common'))
 
-        if 'nvcc' in extra_compile_args:
+        # Since the PR (https://github.com/open-mmlab/mmcv/pull/1463) uses
+        # c++14 features, the argument ['std=c++14'] must be added here.
+        # However, in the windows environment, some standard libraries
+        # will depend on c++17 or higher. In fact, for the windows
+        # environment, the compiler will choose the appropriate compiler
+        # to compile those cpp files, so there is no need to add the
+        # argument
+        if 'nvcc' in extra_compile_args and platform.system() != 'Windows':
             extra_compile_args['nvcc'] += ['-std=c++14']
 
         ext_ops = extension(
