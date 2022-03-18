@@ -2,6 +2,7 @@ import glob
 import os
 import platform
 import re
+import warnings
 from pkg_resources import DistributionNotFound, get_distribution
 from setuptools import find_packages, setup
 
@@ -135,6 +136,21 @@ def get_extensions():
     extensions = []
 
     if os.getenv('MMCV_WITH_TRT', '0') != '0':
+
+        # Following strings of text style are from colorama package
+        bright_style, reset_style = '\x1b[1m', '\x1b[0m'
+        red_text, blue_text = '\x1b[31m', '\x1b[34m'
+        white_background = '\x1b[107m'
+
+        msg = white_background + bright_style + red_text
+        msg += 'DeprecationWarning: ' + \
+            'Custom TensorRT Ops will be deprecated in future. '
+        msg += blue_text + \
+            'Welcome to use the unified model deployment toolbox '
+        msg += 'MMDeploy: https://github.com/open-mmlab/mmdeploy'
+        msg += reset_style
+        warnings.warn(msg)
+
         ext_name = 'mmcv._ext_trt'
         from torch.utils.cpp_extension import include_paths, library_paths
         library_dirs = []
@@ -161,6 +177,9 @@ def get_extensions():
         define_macros += [('MMCV_WITH_TRT', None)]
         cuda_args = os.getenv('MMCV_CUDA_ARGS')
         extra_compile_args['nvcc'] = [cuda_args] if cuda_args else []
+        # prevent cub/thrust conflict with other python library
+        # More context See issues #1454
+        extra_compile_args['nvcc'] += ['-Xcompiler=-fno-gnu-unique']
         library_dirs += library_paths(cuda=True)
 
         from setuptools import Extension
@@ -181,18 +200,20 @@ def get_extensions():
     if EXT_TYPE == 'parrots':
         ext_name = 'mmcv._ext'
         from parrots.utils.build_extension import Extension
+
         # new parrots op impl do not use MMCV_USE_PARROTS
         # define_macros = [('MMCV_USE_PARROTS', None)]
         define_macros = []
         include_dirs = []
         op_files = glob.glob('./mmcv/ops/csrc/pytorch/cuda/*.cu') +\
+            glob.glob('./mmcv/ops/csrc/pytorch/cpu/*.cpp') +\
             glob.glob('./mmcv/ops/csrc/parrots/*.cpp')
         include_dirs.append(os.path.abspath('./mmcv/ops/csrc/common'))
         include_dirs.append(os.path.abspath('./mmcv/ops/csrc/common/cuda'))
         cuda_args = os.getenv('MMCV_CUDA_ARGS')
         extra_compile_args = {
-            'nvcc': [cuda_args] if cuda_args else [],
-            'cxx': [],
+            'nvcc': [cuda_args, '-std=c++14'] if cuda_args else ['-std=c++14'],
+            'cxx': ['-std=c++14'],
         }
         if torch.cuda.is_available() or os.getenv('FORCE_CUDA', '0') == '1':
             define_macros += [('MMCV_WITH_CUDA', None)]
@@ -309,9 +330,23 @@ def get_extensions():
         extensions.append(ext_ops)
 
     if EXT_TYPE == 'pytorch' and os.getenv('MMCV_WITH_ORT', '0') != '0':
+
+        # Following strings of text style are from colorama package
+        bright_style, reset_style = '\x1b[1m', '\x1b[0m'
+        red_text, blue_text = '\x1b[31m', '\x1b[34m'
+        white_background = '\x1b[107m'
+
+        msg = white_background + bright_style + red_text
+        msg += 'DeprecationWarning: ' + \
+            'Custom ONNXRuntime Ops will be deprecated in future. '
+        msg += blue_text + \
+            'Welcome to use the unified model deployment toolbox '
+        msg += 'MMDeploy: https://github.com/open-mmlab/mmdeploy'
+        msg += reset_style
+        warnings.warn(msg)
         ext_name = 'mmcv._ext_ort'
-        from torch.utils.cpp_extension import library_paths, include_paths
         import onnxruntime
+        from torch.utils.cpp_extension import include_paths, library_paths
         library_dirs = []
         libraries = []
         include_dirs = []
@@ -374,9 +409,13 @@ setup(
     url='https://github.com/open-mmlab/mmcv',
     author='MMCV Contributors',
     author_email='openmmlab@gmail.com',
-    setup_requires=['pytest-runner'],
-    tests_require=['pytest'],
     install_requires=install_requires,
+    extras_require={
+        'all': parse_requirements('requirements.txt'),
+        'tests': parse_requirements('requirements/test.txt'),
+        'build': parse_requirements('requirements/build.txt'),
+        'optional': parse_requirements('requirements/optional.txt'),
+    },
     ext_modules=get_extensions(),
     cmdclass=cmd_class,
     zip_safe=False)
