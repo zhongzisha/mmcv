@@ -1,7 +1,7 @@
 export MMCV_WITH_OPS=1
-export CUDA_HOME=/share/home/zhongzisha/cuda-10.2-cudnn-8.2.2
-export MAX_JOBS=16
-export TORCH_CUDA_ARCH_LIST="7.0"
+export CUDA_HOME=/usr/local/cuda-10.2
+export MAX_JOBS=4
+export TORCH_CUDA_ARCH_LIST="6.0"
 python setup.py build_ext
 python setup.py develop
 #pip install -e . -vvv
